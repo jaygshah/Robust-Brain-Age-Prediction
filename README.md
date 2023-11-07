@@ -1,1 +1,1 @@
-# Robust-Brain-Age-Prediction
+# Ordinal Classification with Distance Regularization for Robust Brain Age Prediction
