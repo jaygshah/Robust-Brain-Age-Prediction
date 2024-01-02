@@ -11,9 +11,11 @@ Official PyTorch implementation of [**Ordinal Classification with Distance Regul
 <sup>2</sup>Arizona State University,
 <sup>3</sup>Banner Alzheimer’s Institute
 
----
 ## Abstract 
-Age is one of the major known risk factors for Alzheimer's Disease (AD). Detecting AD early is crucial for effective treatment and preventing irreversible brain damage. Brain age, a measure derived from brain imaging reflecting structural changes due to aging, may have the potential to identify AD onset, assess disease risk, and plan targeted interventions. Deep learning-based regression techniques to predict brain age from magnetic resonance imaging (MRI) scans have shown great accuracy recently. However, these methods are subject to an inherent regression to the mean effect, which causes a systematic bias resulting in an overestimation of brain age in young subjects and underestimation in old subjects. This weakens the reliability of predicted brain age as a valid biomarker for downstream clinical applications. Here, we reformulate the brain age prediction task from regression to classification to address the issue of systematic bias. Recognizing the importance of preserving ordinal information from ages to understand aging trajectory and monitor aging longitudinally, we propose a novel **ORdinal Distance Encoded Regularization (ORDER)** loss that incorporates the order of age labels, enhancing the model's ability to capture age-related patterns. Extensive experiments and ablation studies demonstrate that this framework reduces systematic bias, outperforms state-of-art methods by statistically significant margins, and can better capture subtle differences between clinical groups in an independent AD dataset.
+Age is one of the major known risk factors for Alzheimer's Disease (AD). Detecting AD early is crucial for effective treatment and preventing irreversible brain damage. Brain age, a measure derived from brain imaging reflecting structural changes due to aging, may have the potential to identify AD onset, assess disease risk, and plan targeted interventions. Deep learning-based regression techniques to predict brain age from MRI scans have shown great accuracy recently. However, these methods are subject to an inherent regression to the mean effect, which causes a systematic bias resulting in an overestimation of brain age in young subjects and underestimation in old subjects. This weakens the reliability of predicted brain age as a valid biomarker for downstream clinical applications. Here, we reformulate the brain age prediction task from regression to classification to address the issue of systematic bias. Recognizing the importance of preserving ordinal information from ages to understand aging trajectory and monitor aging longitudinally, we propose a novel **ORdinal Distance Encoded Regularization (ORDER)** loss that incorporates the order of age labels, enhancing the model's ability to capture age-related patterns. Results and ablation studies demonstrate that this framework
+1. Reduces systematic bias in predictions 
+2. Outperforms SOTA methods 
+3. Can better capture subtle differences between clinical groups (Alzheimer's Disease).
 
 <p align="center">
 <img src="imgs/order_loss.png" width=62% height=62% 
@@ -22,10 +24,10 @@ class="center">
 Cross entropy (left) encourages the model to learn high entropy feature representations where embeddings are spread out but fails to capture ordinal information from labels. ORDER loss + cross entropy (right) preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.
 
 <p align="center">
-<img src="imgs/all_losses.png" width=85% height=85% 
+<img src="imgs/all_losses.png" width=100% height=100% 
 class="center">
 </p>
-t-SNE visualization of embeddings from models’ penultimate layer
+t-SNE visualization of embeddings from models’ penultimate layer using different loss functions.
 
 ## Installation
 Instructions to install MONAI can be found [here](https://docs.monai.io/en/stable/installation.html) and the appropriate version of Pytorch using [locally](https://docs.monai.io/en/stable/installation.html).
@@ -53,14 +55,21 @@ data/HC/
   	├──zzz.nii
 	├──...
 ```
-
 ## Training 
 ```
-python3 train_ce_ord.py --dataset data --batch_size 4 --losses ce order --model_name resnet18 --ld 0.1
+python3 train.py --dataset data --batch_size 4 --losses ce order --model_name resnet18 --ld 0.1
 ```
+## Results 
+Methods		  		| MAE 	| Ordinality	
+--------------------| ------|------------
+MSE  				| 3.93	|0.99
+MSE + Euclidean  	| 4.57	|0.95
+CE  				| 3.33	|0.31
+CE + mean-variance  | 2.65	|0.58
+CE + ORDER  		| 2.56	|0.98
 
 ## Citation
-Please consider citing RIED-Net if this repository is useful for your work. 
+Please consider citing this work if this repository is useful for your work. 
 ```
 @inproceedings{shah2024ordinal,
   title={Ordinal Classification With Distance Regularization for Robust Brain Age Prediction},
