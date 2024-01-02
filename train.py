@@ -176,7 +176,7 @@ def main():
     parser.add_argument('--losses', default='ce', type=str, nargs='+', metavar='BETA',
                         help='losses (default: Cross Entropy (ce), add others)')
     parser.add_argument('--ld', default=0.1, type=float, metavar='N',
-                        help='l_d for ordinal_entropy_loss_manhattan')
+                        help='l_d for order_loss')
     
     # Model Parameters
     parser.add_argument('--model_name', default="resnet18", type=str,

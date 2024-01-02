@@ -22,7 +22,53 @@ class="center">
 Cross entropy (left) encourages the model to learn high entropy feature representations where embeddings are spread out but fails to capture ordinal information from labels. ORDER loss + cross entropy (right) preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.
 
 <p align="center">
-<img src="imgs/all_losses.png" width=62% height=62% 
+<img src="imgs/all_losses.png" width=85% height=85% 
 class="center">
 </p>
 t-SNE visualization of embeddings from models’ penultimate layer
+
+## Installation
+Instructions to install MONAI can be found [here](https://docs.monai.io/en/stable/installation.html) and the appropriate version of Pytorch using [locally](https://docs.monai.io/en/stable/installation.html).
+Packages used in the current version of this code.
+```
+monai==1.3.0
+torch==2.1.0+cu118
+torchaudio==2.1.0+cu118
+torchmetrics==1.2.0
+torchvision==0.16.0+cu118
+tensorboard==2.14.1
+tensorflow==2.14.0
+```
+## Dataset
+Use `age_binning.py` to create the data folds. You should structure your aligned dataset in the following way:
+```
+data/HC/
+  ├── train
+  	├──xxx.nii
+	├──...
+  ├── val
+  	├──yyy.nii
+	├──...
+  ├── test
+  	├──zzz.nii
+	├──...
+```
+
+## Training 
+```
+python3 train_ce_ord.py --dataset data --batch_size 4 --losses ce order --model_name resnet18 --ld 0.1
+```
+
+## Citation
+Please consider citing RIED-Net if this repository is useful for your work. 
+```
+@inproceedings{shah2024ordinal,
+  title={Ordinal Classification With Distance Regularization for Robust Brain Age Prediction},
+  author={Shah, Jay and Siddiquee, Md Mahfuzur Rahman and Su, Yi and Wu, Teresa and Li, Baoxin},
+  booktitle={Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision},
+  pages={7882--7891},
+  year={2024}
+}
+```
+## Acknowledgments
+This research received support from the National Institute on Aging (NIA) of the National Institutes of Health (NIH) under Award Numbers R01AG069453, P30AG072980, RF1AG073424, Banner Alzheimer’s Foundation and the Arizona Department of Health Services to Arizona Alzheimer’s Research Center.
