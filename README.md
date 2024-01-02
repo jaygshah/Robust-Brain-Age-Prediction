@@ -61,12 +61,12 @@ python3 train.py --dataset data --batch_size 4 --losses ce order --model_name re
 ```
 ## Results 
 Methods		  		| MAE 	| Ordinality| SB-L	| SB-R
---------------------| :----:|:---------:|:-----:|:------:
-MSE  				| 3.93	|0.99		|		|
-MSE + Euclidean  	| 4.57	|0.95		|		|
-CE  				| 3.33	|0.31		|		|
-CE + mean-variance  | 2.65	|0.58		|		|
-CE + ORDER  		| 2.56	|0.98		|		|
+--------------------| :----:|:---------:|:-----:|:----:
+MSE  				| 3.93	|0.99		|3.4	|-4.2
+MSE + Euclidean  	| 4.57	|0.95		|4.8	|-4.1
+CE  				| 3.33	|0.31		|1.1	|-3.6
+CE + mean-variance  | 2.65	|0.58		|0.4	|-4.2
+CE + ORDER  		| **2.56**	|**0.98**		|**0.1**	|**-2.5**
 
 ## Citation
 Please consider citing this work if this repository is useful for your work. 
