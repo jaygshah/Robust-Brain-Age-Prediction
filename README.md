@@ -60,13 +60,14 @@ data/HC/
 python3 train.py --dataset data --batch_size 4 --losses ce order --model_name resnet18 --ld 0.1
 ```
 ## Results 
-Methods		  		| MAE 	| Ordinality	
---------------------| ------|------------
-MSE  				| 3.93	|0.99
-MSE + Euclidean  	| 4.57	|0.95
-CE  				| 3.33	|0.31
-CE + mean-variance  | 2.65	|0.58
-CE + ORDER  		| 2.56	|0.98
+Methods		  		| MAE 	| Ordinality| Systematic Bias
+					|		|			| SB-L	| SB-R  	
+--------------------| :----:|:----------:-------|--------
+MSE  				| 3.93	|0.99		|		|
+MSE + Euclidean  	| 4.57	|0.95		|		|
+CE  				| 3.33	|0.31		|		|
+CE + mean-variance  | 2.65	|0.58		|		|
+CE + ORDER  		| 2.56	|0.98		|		|
 
 ## Citation
 Please consider citing this work if this repository is useful for your work. 
