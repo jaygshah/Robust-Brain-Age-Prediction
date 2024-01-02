@@ -19,4 +19,10 @@ Age is one of the major known risk factors for Alzheimer's Disease (AD). Detecti
 <img src="imgs/order_loss.png" width=62% height=62% 
 class="center">
 </p>
-Visual comparison of synthetic images generated using RIED-Net to real Pittsburgh Compound-B (PIB) data for the OASIS (A &amp; B) and GAAIN (C &amp; D) datasets
+Cross entropy (left) encourages the model to learn high entropy feature representations where embeddings are spread out but fails to capture ordinal information from labels. ORDER loss + cross entropy (right) preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.
+
+<p align="center">
+<img src="imgs/all_losses.png" width=62% height=62% 
+class="center">
+</p>
+t-SNE visualization of embeddings from models’ penultimate layer
