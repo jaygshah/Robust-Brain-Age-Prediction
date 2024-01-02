@@ -61,7 +61,6 @@ python3 train.py --dataset data --batch_size 4 --losses ce order --model_name re
 ```
 ## Results 
 Methods		  		| MAE 	| Ordinality| Systematic Bias
-					|		|			| SB-L	| SB-R  	
 --------------------| :----:|:---------:|:-----:|:------:
 MSE  				| 3.93	|0.99		|		|
 MSE + Euclidean  	| 4.57	|0.95		|		|
