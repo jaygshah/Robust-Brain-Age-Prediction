@@ -19,13 +19,15 @@ Age is one of the major known risk factors for Alzheimer's Disease (AD). Detecti
 
 <p align="center">
 <img src="imgs/order_loss.png" width=62% height=62% class="center">
+</p>
+<p align="center">
 <em>Cross entropy (left) encourages the model to learn high entropy feature representations where embeddings are spread out but fails to capture ordinal information from labels. ORDER loss + cross entropy (right) preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.</em>
 </p>
 
 <p align="center">
 <img src="imgs/all_losses.png" width=100% height=100% class="center">
 </p>
-<p>
+<p align="center">
 <em>t-SNE visualization of embeddings from models’ penultimate layer using different loss functions.</em>
 </p>
 
