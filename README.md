@@ -21,7 +21,7 @@ Age is one of the major known risk factors for Alzheimer's Disease (AD). Detecti
 <img src="imgs/order_loss.png" width=62% height=62% class="center">
 </p>
 <p align="center">
-<em>Cross entropy (left) encourages the model to learn high entropy feature representations where embeddings are spread out but fails to capture ordinal information from labels. ORDER loss + cross entropy (right) preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.</em>
+<em>Cross entropy encourages the model to learn high entropy feature representations where embeddings are spread out, but fails to capture ordinality from labels. ORDER loss + cross entropy preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.</em>
 </p>
 
 <p align="center">
@@ -62,13 +62,13 @@ data/HC/
 python3 train.py --dataset data --batch_size 4 --losses ce order --model_name resnet18 --ld 0.1
 ```
 ## Results 
-Methods		  		| MAE 	| Ordinality| SB-L	| SB-R
---------------------| :----:|:---------:|:-----:|:----:
-MSE  				| 3.93	|0.99		|3.4	|-4.2
-MSE + Euclidean  	| 4.57	|0.95		|4.8	|-4.1
-CE  				| 3.33	|0.31		|1.1	|-3.6
-CE + mean-variance  | 2.65	|0.58		|0.4	|-4.2
-CE + ORDER  		| **2.56**	|**0.98**		|**0.1**	|**-2.5**
+Methods		      | MAE   | Ordinality| SB-L	| SB-R
+------------------| :----:|:---------:|:-----:|:----:
+MSE  			  | 3.93  |0.99		  |3.4	  |-4.2
+MSE + Euclidean   | 4.57  |0.95		  |4.8	  |-4.1
+CE  			  | 3.33  |0.31		  |1.1	  |-3.6
+CE + mean-variance| 2.65  |0.58		  |0.4	  |-4.2
+CE + ORDER  	  | **2.56**	|**0.98**		|**0.1**	|**-2.5**
 
 ## Citation
 Please consider citing this work if this repository is useful for your work. 
