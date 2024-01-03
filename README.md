@@ -18,16 +18,14 @@ Age is one of the major known risk factors for Alzheimer's Disease (AD). Detecti
 3. Can better capture subtle differences between clinical groups (Alzheimer's Disease).
 
 <p align="center">
-<img src="imgs/order_loss.png" width=62% height=62% 
-class="center">
+<img src="imgs/order_loss.png" width=62% height=62% class="center">
+<em>*Cross entropy (left) encourages the model to learn high entropy feature representations where embeddings are spread out but fails to capture ordinal information from labels. ORDER loss + cross entropy (right) preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.*</em>
 </p>
-Cross entropy (left) encourages the model to learn high entropy feature representations where embeddings are spread out but fails to capture ordinal information from labels. ORDER loss + cross entropy (right) preserves ordinality by spreading the features proportional to Manhattan distance between normalized features weighted by absolute age difference.
 
 <p align="center">
-<img src="imgs/all_losses.png" width=100% height=100% 
-class="center">
+<img src="imgs/all_losses.png" width=100% height=100% class="center">
+<em>*t-SNE visualization of embeddings from models’ penultimate layer using different loss functions.*</em>
 </p>
-t-SNE visualization of embeddings from models’ penultimate layer using different loss functions.
 
 ## Installation
 Instructions to install MONAI can be found [here](https://docs.monai.io/en/stable/installation.html) and the appropriate version of Pytorch using [locally](https://docs.monai.io/en/stable/installation.html).
