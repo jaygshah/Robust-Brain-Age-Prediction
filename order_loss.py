@@ -42,13 +42,13 @@ def euclidean_loss(features, y):
 	loss = - torch.mean(distance)
 	return loss
 
-def order_loss_p(features, y):
+def order_loss_p(features, y, p=float(1/2)):
 
 	if features.shape[0]>1:
 		features = F.normalize(features, dim=1)
 	
-	distance = triu_up(distance_p(features, features, float(1/2)))
-	weights = triu_up(distance_p(y, y, float(1/2)))
+	distance = triu_up(distance_p(features, features, p))
+	weights = triu_up(distance_p(y, y, p))
 	
 	has_same_label = 0 in weights
 	if features.shape[0]>1:
