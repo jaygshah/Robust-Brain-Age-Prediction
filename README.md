@@ -1,4 +1,6 @@
 # Robust Brain Age Prediction
+[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/ordinal-classification-with-distance/ordinal-classification-on-oasis-nacc-icbm)](https://paperswithcode.com/sota/ordinal-classification-on-oasis-nacc-icbm?p=ordinal-classification-with-distance)
+
 Official PyTorch implementation of [**Ordinal Classification with Distance Regularization for Robust Brain Age Prediction**](https://openaccess.thecvf.com/content/WACV2024/html/Shah_Ordinal_Classification_With_Distance_Regularization_for_Robust_Brain_Age_Prediction_WACV_2024_paper.html) [WACV 2024]
 
 [Jay Shah](https://www.public.asu.edu/~jgshah1/)<sup>1,2</sup>,
