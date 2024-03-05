@@ -191,6 +191,9 @@ def main():
     args = parser.parse_args()
     print(args)
 
+    if "mse" in arg.losses:
+        args.num_classes = 1
+
     timestamp = datetime.datetime.now().strftime("%m%d%y%H%M%S")
     training_folder = f"/data/amciilab/jay/diff-agepred-manh/{args.dataset}_{args.model_name}_{timestamp}"
 
