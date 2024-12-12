@@ -191,7 +191,7 @@ def main():
     args = parser.parse_args()
     print(args)
 
-    if "mse" in arg.losses:
+    if "mse" in args.losses:
         args.num_classes = 1
 
     timestamp = datetime.datetime.now().strftime("%m%d%y%H%M%S")
