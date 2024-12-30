@@ -7,21 +7,25 @@ import pandas as pd
 import os, csv, time
 import torch
 import torch.nn as nn
+import sys
 
 from ordinal_loss import order_loss, euclidean_loss, order_loss_p
 from mean_variance_loss import MeanVarianceLoss
 
 from models import resnet
 
+# Constants for MeanVarianceLoss
 LAMBDA_1 = 0.05
 LAMBDA_2 = 0.2
 START_AGE = 10
 END_AGE = 95
 
+# Dictionary to store metric functions
 metrics_f = {
     "accuracy": skmet.accuracy_score,
 }
 
+# Dictionary to store loss functions
 loss_functions = {
     "ce": nn.CrossEntropyLoss(),
     "order": order_loss,
@@ -30,6 +34,7 @@ loss_functions = {
     "euc": euclidean_loss,
 }
 
+# Function to get the number of parameters in a model
 def get_n_params(model):
     pp=0
     for p in list(model.parameters()):
@@ -39,6 +44,7 @@ def get_n_params(model):
         pp += nn
     return pp
 
+# Training function
 def train(model, dataset, losses, l_d, opt, epoch, device, cls_num=2):
     
     model.train()
@@ -49,7 +55,7 @@ def train(model, dataset, losses, l_d, opt, epoch, device, cls_num=2):
     for it in range(len(dataset)):
         try:
             x, y = next(data)
-        except:
+        except StopIteration:
             data = iter(dataset)
             x, y = next(data)
 
@@ -59,7 +65,7 @@ def train(model, dataset, losses, l_d, opt, epoch, device, cls_num=2):
         features, y_ = model(x)
 
         for loss in losses:
-            if loss == "order" or "euc":
+            if loss == "order" or loss == "euc":
                 losses_dict[loss] = l_d*loss_functions[loss](features, y)
             elif loss == "mv":
                 mean_loss, var_loss = loss_functions[loss](y_, y[:, 0])
@@ -92,6 +98,7 @@ def train(model, dataset, losses, l_d, opt, epoch, device, cls_num=2):
 
     return metrics
 
+# Validation and testing function
 def val_test(model, dataset, losses, l_d, epoch, device, cls_num=2, mode="val"):
     
     model.eval()
@@ -159,6 +166,7 @@ def val_test(model, dataset, losses, l_d, epoch, device, cls_num=2, mode="val"):
 
     return metrics
 
+# Main function to parse arguments and run training and testing
 def main():
 
     parser = argparse.ArgumentParser(description='3D Brain Age prediction')
@@ -201,8 +209,8 @@ def main():
         os.makedirs(training_folder)
         os.makedirs(f"{training_folder}/weights")
     else:
-        print(f"{training_folder} exists!")
-        exit()
+        import sys
+        sys.exit()
 
     with open(f'{training_folder}/params.json', 'w') as f:
         json.dump(args.__dict__, f, indent=4)
@@ -210,6 +218,7 @@ def main():
     logger = Logger(f'{training_folder}/logs')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    # Model selection based on model_name argument
     if args.model_name == "resnet10":
       model = resnet.generate_model(model_depth=10,
                                     n_classes=args.num_classes,
@@ -240,7 +249,6 @@ def main():
                                     n_input_channels=1,
                                     widen_factor=1)
 
-
     else:
       print(f"Invalid model_name: {args.model_name}!")
       exit()
@@ -248,18 +256,21 @@ def main():
     print("Training folder: ", training_folder)
     print("Model parameters: ", get_n_params(model))
 
+    # Load datasets
     dataset_train = get_loader(f'./{args.dataset}/HC/train', batch_size=args.batch_size, mode="train")
     dataset_val = get_loader(f'./{args.dataset}/HC/val', batch_size=args.batch_size, mode="val")
     dataset_test = get_loader(f'./{args.dataset}/HC/test', batch_size=args.batch_size, mode="test")
 
+    # Optimizer selection based on opt argument
     if args.opt == "adam":
         opt = torch.optim.Adam(model.parameters())
     else:
-      print(f"Invalid OPTIMIZER: {args.model_name}!")
+      print(f"Invalid OPTIMIZER: {args.opt}!")
       exit()
     
     model.to(device)
 
+    # Training loop
     for e in range(args.epochs):
         
       loss_metrics = train(model, dataset_train, args.losses, args.ld, opt, e, device, args.num_classes)
