@@ -3,11 +3,9 @@ from logger import Logger
 from sklearn import metrics as skmet
 import argparse, datetime, json
 import numpy as np
-import pandas as pd
-import os, csv, time
+import os
 import torch
 import torch.nn as nn
-import sys
 
 from ordinal_loss import order_loss, euclidean_loss, order_loss_p
 from mean_variance_loss import MeanVarianceLoss
@@ -123,7 +121,7 @@ def val_test(model, dataset, losses, l_d, epoch, device, cls_num=2, mode="val"):
             features, y_ = model(x)
 
             for loss in losses:
-                if loss == "order" or "euc":
+                if loss == "order" or loss == "euc":
                     losses_dict[loss] = l_d*loss_functions[loss](features, y)
                 elif loss == "mv":
                     mean_loss, var_loss = loss_functions[loss](y_, y[:, 0])
@@ -201,6 +199,10 @@ def main():
 
     if "mse" in args.losses:
         args.num_classes = 1
+    
+    if args.batch_size < 2 and "order" in args.losses:
+        print("Batch size should be at least 2 if you are using order loss!")
+        exit()
 
     timestamp = datetime.datetime.now().strftime("%m%d%y%H%M%S")
     training_folder = f"/data/amciilab/jay/diff-agepred-manh/{args.dataset}_{args.model_name}_{timestamp}"
