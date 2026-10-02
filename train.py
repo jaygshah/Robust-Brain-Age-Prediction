@@ -1,12 +1,15 @@
-from data_loaders_4binover import get_loader
+from collections import defaultdict
+from data_loaders_4binover import get_loader, list_age_folders
 from logger import Logger
-from sklearn import metrics as skmet
 import argparse, datetime, json
 import numpy as np
 import os
+import pandas as pd
+import random
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 
+from metrics import expected_age, mean_absolute_error, ordinality, systematic_bias
 from ordinal_loss import order_loss, euclidean_loss, order_loss_p
 from mean_variance_loss import MeanVarianceLoss
 
@@ -15,154 +18,134 @@ from models import resnet
 # Constants for MeanVarianceLoss
 LAMBDA_1 = 0.05
 LAMBDA_2 = 0.2
-START_AGE = 10
-END_AGE = 95
 
-# Dictionary to store metric functions
-metrics_f = {
-    "accuracy": skmet.accuracy_score,
-}
+mean_variance_loss = MeanVarianceLoss(LAMBDA_1, LAMBDA_2)
 
-# Dictionary to store loss functions
-loss_functions = {
-    "ce": nn.CrossEntropyLoss(),
+# Feature-space distance regularizers, weighted by --ld
+distance_losses = {
     "order": order_loss,
-    "mv": MeanVarianceLoss(LAMBDA_1, LAMBDA_2, START_AGE, END_AGE),
-    "mse": nn.MSELoss(),
     "euc": euclidean_loss,
+    "order_p": order_loss_p,
 }
+
+LOSSES = ["ce", "mv", "mse", *distance_losses]
+MODEL_DEPTHS = {"resnet10": 10, "resnet18": 18, "resnet34": 34, "resnet50": 50, "resnet101": 101}
+
 
 # Function to get the number of parameters in a model
 def get_n_params(model):
-    pp=0
-    for p in list(model.parameters()):
-        nn=1
-        for s in list(p.size()):
-            nn = nn*s
-        pp += nn
-    return pp
+    return sum(p.numel() for p in model.parameters())
+
+
+def build_model(model_name, num_classes):
+    return resnet.generate_model(model_depth=MODEL_DEPTHS[model_name],
+                                 n_classes=num_classes,
+                                 n_input_channels=1,
+                                 widen_factor=1)
+
+
+def compute_losses(features, y_, y, args):
+    target = y[:, 0]
+    losses = {}
+    for loss in args.losses:
+        if loss in distance_losses:
+            kwargs = {"p": args.p} if loss == "order_p" else {}
+            losses[loss] = args.ld * distance_losses[loss](features, y, max_label_diff=args.max_label_diff, **kwargs)
+        elif loss == "mv":
+            mean_loss, var_loss = mean_variance_loss(y_, target)
+            losses[loss] = mean_loss + var_loss
+        elif loss == "mse":
+            losses[loss] = F.mse_loss(y_[:, 0], target.float())
+        else:
+            losses[loss] = F.cross_entropy(y_, target)
+    return losses
+
+
+def predict_age(y_, args):
+    if args.regression:
+        return y_[:, 0] + args.min_age
+    return expected_age(y_, args.min_age)
+
 
 # Training function
-def train(model, dataset, losses, l_d, opt, epoch, device, cls_num=2):
-    
+def train(model, loader, args, opt, epoch, device, logger):
+
     model.train()
-    data = iter(dataset)
+    metrics = defaultdict(list)
 
-    metrics, losses_dict = {}, {}
-
-    for it in range(len(dataset)):
-        try:
-            x, y = next(data)
-        except StopIteration:
-            data = iter(dataset)
-            x, y = next(data)
-
+    for it, (x, y, _) in enumerate(loader):
         x = x.to(device)
         y = y.to(device)
 
         features, y_ = model(x)
-
-        for loss in losses:
-            if loss == "order" or loss == "euc":
-                losses_dict[loss] = l_d*loss_functions[loss](features, y)
-            elif loss == "mv":
-                mean_loss, var_loss = loss_functions[loss](y_, y[:, 0])
-                losses_dict[loss] = mean_loss + var_loss
-            else:
-                losses_dict[loss] = loss_functions[loss](y_, y[:, 0])
-
-        closs = sum(losses_dict.values())
+        losses = compute_losses(features, y_, y, args)
+        closs = sum(losses.values())
 
         opt.zero_grad()
         closs.backward()
         opt.step()
 
-        for x in losses_dict:
-            if x in metrics:
-                metrics[x].append(losses_dict[x].item())
-            else:
-                metrics[x] = [losses_dict[x].item()]
+        step = epoch * len(loader) + it + 1
+        for name, value in [*losses.items(), ("total_loss", closs)]:
+            metrics[name].append(value.item())
+            logger.scalar_summary("train/" + name, value.item(), step)
 
-        if "total_loss" in metrics:
-            metrics["total_loss"].append(closs.item())
-        else:
-            metrics["total_loss"] = [closs.item()]
-
-        log = f"Epoch {epoch+1}, Iter {it+1}/{len(dataset)}:"
+        log = f"Epoch {epoch+1}, Iter {it+1}/{len(loader)}:"
         for m in sorted(metrics.keys()):
-            log += f" {m} = {np.mean(metrics[m])}"
-
+            log += f" {m} = {np.mean(metrics[m]):.4f}"
         print(log)
 
     return metrics
+
 
 # Validation and testing function
-def val_test(model, dataset, losses, l_d, epoch, device, cls_num=2, mode="val"):
-    
+@torch.no_grad()
+def evaluate(model, loader, args, device, compute_loss=True):
+    """Return (metrics, per-subject predictions). Ages are in years; BrainAGE = predicted - true age."""
+
     model.eval()
-    data = iter(dataset)
+    loss_values = defaultdict(list)
+    features_all, true_ages, pred_ages, pred_classes, paths = [], [], [], [], []
 
-    metrics, losses_dict = {}, {}
+    for x, y, url in loader:
+        x = x.to(device)
+        y = y.to(device)
 
-    gt = []
-    pred = []
+        features, y_ = model(x)
 
-    with torch.no_grad():
-        for it in range(len(dataset)):
-            try:
-                x, y = next(data)
-            except:
-                data = iter(dataset)
-                x, y = next(data)
+        if compute_loss:
+            losses = compute_losses(features, y_, y, args)
+            for name, value in losses.items():
+                loss_values[name].append(value.item())
+            loss_values["total_loss"].append(sum(losses.values()).item())
 
-            x = x.to(device)
-            y = y.to(device)
+        features_all.append(features.cpu())
+        true_ages.append((y[:, 0] + args.min_age).cpu())
+        pred_ages.append(predict_age(y_, args).cpu())
+        if not args.regression:
+            pred_classes.append((torch.argmax(y_, dim=1) + args.min_age).cpu())
+        paths += list(url)
 
-            features, y_ = model(x)
+    true_ages = torch.cat(true_ages).numpy()
+    pred_ages = torch.cat(pred_ages).numpy()
 
-            for loss in losses:
-                if loss == "order" or loss == "euc":
-                    losses_dict[loss] = l_d*loss_functions[loss](features, y)
-                elif loss == "mv":
-                    mean_loss, var_loss = loss_functions[loss](y_, y[:, 0])
-                    losses_dict[loss] = mean_loss + var_loss
-                else:
-                    losses_dict[loss] = loss_functions[loss](y_, y[:, 0])
+    metrics = {name: float(np.mean(values)) for name, values in loss_values.items()}
+    metrics["mae"] = mean_absolute_error(pred_ages, true_ages)
+    metrics["sb_l"], metrics["sb_r"] = systematic_bias(pred_ages, true_ages)
+    metrics["ordinality"] = ordinality(torch.cat(features_all).numpy(), true_ages)
 
-            closs = sum(losses_dict.values())
+    predictions = {"path": paths, "age": true_ages, "predicted_age": pred_ages, "brainage": pred_ages - true_ages}
+    if not args.regression:
+        pred_classes = torch.cat(pred_classes).numpy()
+        metrics["accuracy"] = float(np.mean(pred_classes == true_ages))
+        predictions["predicted_class"] = pred_classes
 
-            for x in losses_dict:
-                if x in metrics:
-                    metrics[x].append(losses_dict[x].item())
-                else:
-                    metrics[x] = [losses_dict[x].item()]
+    return metrics, pd.DataFrame(predictions)
 
-            if "total_loss" in metrics:
-                metrics["total_loss"].append(closs.item())
-            else:
-                metrics["total_loss"] = [closs.item()]
 
-            for x in y.cpu().numpy().squeeze():
-                gt.append(x)
-            for y in torch.argmax(y_, dim=1).cpu().numpy():
-                pred.append(y)
+def format_metrics(metrics):
+    return " ".join(f"{k} = {v:.4f}" for k, v in metrics.items())
 
-        gt_arr = np.array(gt)
-        pred_arr = np.array(pred)
-
-        for mf in metrics_f.keys():
-            if mf in metrics:
-                metrics[mf].append( metrics_f[mf](gt_arr, pred_arr) )
-            else:
-                metrics[mf] = [ metrics_f[mf](gt_arr, pred_arr) ]
-
-        log = f"Testing on {mode.upper()} Dataset at Epoch {epoch+1}:"
-        log += f" loss = {np.mean(metrics['total_loss'])}"
-        log += f" accuracy = {np.mean(metrics['accuracy'])}"
-
-        print(log)
-
-    return metrics
 
 # Main function to parse arguments and run training and testing
 def main():
@@ -173,124 +156,143 @@ def main():
                         help='number of total epochs to run')
     parser.add_argument('--batch_size', default=4, type=int, metavar='N',
                         help='number of samples in each batch')
+    parser.add_argument('--patience', default=0, type=int, metavar='N',
+                        help='stop after N epochs without val MAE improvement (0 disables early stopping)')
+    parser.add_argument('--seed', default=3141, type=int)
 
     # Data Parameters
-    parser.add_argument('-d', '--dataset', default='5data', type=str)
-    parser.add_argument('--augmentation', action='store_true')
+    parser.add_argument('-d', '--dataset', default='data', type=str,
+                        help='folder containing HC/{train,val,test}/<age>/*.nii (see age_binning.py)')
+    parser.add_argument('--min_age', default=None, type=int,
+                        help='youngest age class (default: youngest age folder in the training set)')
+    parser.add_argument('--max_age', default=None, type=int,
+                        help='oldest age class (default: oldest age folder in the training set)')
+    parser.add_argument('--no_augmentation', action='store_true',
+                        help='disable training-time data augmentation')
+    parser.add_argument('--num_workers', default=16, type=int)
 
     # Losses used
-    parser.add_argument('--losses', default='ce', type=str, nargs='+', metavar='BETA',
+    parser.add_argument('--losses', default=['ce'], type=str, nargs='+', choices=LOSSES,
                         help='losses (default: Cross Entropy (ce), add others)')
     parser.add_argument('--ld', default=0.1, type=float, metavar='N',
-                        help='l_d for order_loss')
-    
+                        help='weight of the distance loss (order, euc, order_p)')
+    parser.add_argument('--order_weights', default='batch', choices=['batch', 'age'],
+                        help="pair weights of the distance loss: 'batch' = per-batch (w - min) / max scaling used "
+                             "for the WACV 2024 results; 'age' = |age difference| / (max_age - min_age)")
+    parser.add_argument('--p', default=0.5, type=float,
+                        help='Lk distance used by order_p')
+
     # Model Parameters
-    parser.add_argument('--model_name', default="resnet18", type=str,
+    parser.add_argument('--model_name', default="resnet18", type=str, choices=list(MODEL_DEPTHS),
                         help='name of the classification model')
-    parser.add_argument('--num_classes', default=86, type=int, metavar='N',
-                        help='number of classes to predict')
 
     # Optimizer parameters
-    parser.add_argument('--opt', default='adam', type=str, metavar='OPTIMIZER',
-                        help='Optimizer (default: "adam"')
+    parser.add_argument('--opt', default='adamw', type=str, choices=['adamw', 'adam'],
+                        help='Optimizer (default: "adamw")')
+    parser.add_argument('--lr', default=1e-3, type=float)
+    parser.add_argument('--weight_decay', default=1e-2, type=float)
+
+    # Outputs
+    parser.add_argument('--output_dir', default='./runs', type=str)
+    parser.add_argument('--save_every_epoch', action='store_true',
+                        help='keep a checkpoint for every epoch in addition to best.ckpt and last.ckpt')
 
     args = parser.parse_args()
+
+    args.regression = "mse" in args.losses
+    if args.regression and ({"ce", "mv"} & set(args.losses)):
+        parser.error("mse (regression) cannot be combined with ce or mv (classification)")
+
+    if args.batch_size < 2 and set(distance_losses) & set(args.losses):
+        parser.error("Batch size should be at least 2 if you are using order, euc or order_p loss!")
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    split_dirs = {split: os.path.join(args.dataset, "HC", split) for split in ["train", "val", "test"]}
+    train_ages = list_age_folders(split_dirs["train"])
+    if not train_ages:
+        parser.error(f"No age folders found in {split_dirs['train']}")
+    if args.min_age is None:
+        args.min_age = train_ages[0]
+    if args.max_age is None:
+        args.max_age = train_ages[-1]
+    args.num_classes = 1 if args.regression else args.max_age - args.min_age + 1
+    args.max_label_diff = args.max_age - args.min_age if args.order_weights == "age" else None
+
     print(args)
 
-    if "mse" in args.losses:
-        args.num_classes = 1
-    
-    if args.batch_size < 2 and "order" in args.losses:
-        print("Batch size should be at least 2 if you are using order loss!")
-        exit()
-
     timestamp = datetime.datetime.now().strftime("%m%d%y%H%M%S")
-    training_folder = f"/data/amciilab/jay/diff-agepred-manh/{args.dataset}_{args.model_name}_{timestamp}"
+    dataset_name = os.path.basename(os.path.normpath(args.dataset))
+    training_folder = os.path.join(args.output_dir, f"{dataset_name}_{args.model_name}_{timestamp}")
+    weights_folder = os.path.join(training_folder, "weights")
+    os.makedirs(weights_folder)
 
-    if not os.path.exists(training_folder):
-        os.makedirs(training_folder)
-        os.makedirs(f"{training_folder}/weights")
-    else:
-        import sys
-        sys.exit()
-
-    with open(f'{training_folder}/params.json', 'w') as f:
+    with open(os.path.join(training_folder, 'params.json'), 'w') as f:
         json.dump(args.__dict__, f, indent=4)
 
-    logger = Logger(f'{training_folder}/logs')
+    logger = Logger(os.path.join(training_folder, 'logs'))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Model selection based on model_name argument
-    if args.model_name == "resnet10":
-      model = resnet.generate_model(model_depth=10,
-                                    n_classes=args.num_classes,
-                                    n_input_channels=1,
-                                    widen_factor=1)
-
-    elif args.model_name == "resnet18":
-      model = resnet.generate_model(model_depth=18,
-                                    n_classes=args.num_classes,
-                                    n_input_channels=1,
-                                    widen_factor=1)
-
-    elif args.model_name == "resnet34":
-      model = resnet.generate_model(model_depth=34,
-                                    n_classes=args.num_classes,
-                                    n_input_channels=1,
-                                    widen_factor=1)
-
-    elif args.model_name == "resnet50":
-      model = resnet.generate_model(model_depth=50,
-                                    n_classes=args.num_classes,
-                                    n_input_channels=1,
-                                    widen_factor=1)
-
-    elif args.model_name == "resnet101":
-      model = resnet.generate_model(model_depth=101,
-                                    n_classes=args.num_classes,
-                                    n_input_channels=1,
-                                    widen_factor=1)
-
-    else:
-      print(f"Invalid model_name: {args.model_name}!")
-      exit()
+    model = build_model(args.model_name, args.num_classes)
 
     print("Training folder: ", training_folder)
     print("Model parameters: ", get_n_params(model))
 
     # Load datasets
-    dataset_train = get_loader(f'./{args.dataset}/HC/train', batch_size=args.batch_size, mode="train")
-    dataset_val = get_loader(f'./{args.dataset}/HC/val', batch_size=args.batch_size, mode="val")
-    dataset_test = get_loader(f'./{args.dataset}/HC/test', batch_size=args.batch_size, mode="test")
+    loader_kwargs = dict(min_age=args.min_age, max_age=args.max_age, batch_size=args.batch_size,
+                         num_workers=args.num_workers)
+    dataset_train = get_loader(split_dirs["train"], mode="train", augment=not args.no_augmentation, **loader_kwargs)
+    dataset_val = get_loader(split_dirs["val"], mode="val", **loader_kwargs)
+    dataset_test = get_loader(split_dirs["test"], mode="test", **loader_kwargs)
 
     # Optimizer selection based on opt argument
-    if args.opt == "adam":
-        opt = torch.optim.Adam(model.parameters())
-    else:
-      print(f"Invalid OPTIMIZER: {args.opt}!")
-      exit()
-    
+    optimizers = {"adamw": torch.optim.AdamW, "adam": torch.optim.Adam}
+    opt = optimizers[args.opt](model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
     model.to(device)
+
+    best_path = os.path.join(weights_folder, "best.ckpt")
+    best_mae, best_epoch = float("inf"), 0
 
     # Training loop
     for e in range(args.epochs):
-        
-      loss_metrics = train(model, dataset_train, args.losses, args.ld, opt, e, device, args.num_classes)
 
-      for tag, value in loss_metrics.items():
-          for cnt in range(len(value)):
-              logger.scalar_summary("train/"+tag, value[cnt], e * len(loss_metrics["loss"]) + cnt + 1)
+        train(model, dataset_train, args, opt, e, device, logger)
 
-      mpath = os.path.join(f"{training_folder}/weights", '{}.ckpt'.format(e+1))
-      torch.save(model.state_dict(), mpath)
-        
-      val_loss_metrics = val_test(model, dataset_val, args.losses, args.ld, e, device, args.num_classes, "val")
-      for tag, value in val_loss_metrics.items():
-          logger.scalar_summary("val/"+tag, np.mean(value), (e+1))
+        torch.save(model.state_dict(), os.path.join(weights_folder, "last.ckpt"))
+        if args.save_every_epoch:
+            torch.save(model.state_dict(), os.path.join(weights_folder, f"{e+1}.ckpt"))
 
-      test_loss_metrics = val_test(model, dataset_test, args.losses, args.ld, e, device, args.num_classes, "test")
-      for tag, value in test_loss_metrics.items():
-          logger.scalar_summary("test/"+tag, np.mean(value), (e+1))
+        val_metrics, _ = evaluate(model, dataset_val, args, device)
+        for tag, value in val_metrics.items():
+            logger.scalar_summary("val/" + tag, value, e + 1)
+        print(f"Testing on VAL Dataset at Epoch {e+1}: {format_metrics(val_metrics)}")
+
+        if val_metrics["mae"] < best_mae:
+            best_mae, best_epoch = val_metrics["mae"], e + 1
+            torch.save(model.state_dict(), best_path)
+            print(f"New best val MAE {best_mae:.4f}, saved {best_path}")
+        elif args.patience and e + 1 - best_epoch >= args.patience:
+            print(f"Early stopping: no val MAE improvement for {args.patience} epochs")
+            break
+
+    # Test the checkpoint with the best validation MAE
+    if not os.path.exists(best_path):
+        print("Val MAE never improved (NaN?); testing the last checkpoint instead")
+        best_path = os.path.join(weights_folder, "last.ckpt")
+    model.load_state_dict(torch.load(best_path, map_location=device))
+    test_metrics, test_predictions = evaluate(model, dataset_test, args, device)
+    test_metrics["best_epoch"] = best_epoch
+    for tag, value in test_metrics.items():
+        logger.scalar_summary("test/" + tag, value, best_epoch)
+    print(f"Testing on TEST Dataset with best epoch {best_epoch}: {format_metrics(test_metrics)}")
+
+    with open(os.path.join(training_folder, 'test_metrics.json'), 'w') as f:
+        json.dump(test_metrics, f, indent=4)
+    test_predictions.to_csv(os.path.join(training_folder, 'test_predictions.csv'), index=False)
+    logger.close()
 
 
 if __name__ == '__main__':

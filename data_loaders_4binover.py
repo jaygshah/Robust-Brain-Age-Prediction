@@ -1,86 +1,86 @@
+from collections import Counter
 from glob import glob
 from torch.utils import data
 from monai import transforms as T
 import nibabel as nib
 import numpy as np
 import os
-import random, csv
 import torch
-import pandas as pd
+
+# Age groups used for stratified oversampling: 8-12, 12-16, ..., 92-96
+AGE_BIN_EDGES = np.arange(8, 97, 4)
+
+
+def list_age_folders(image_dir):
+	"""Return the ages (as ints) of the per-age subfolders in image_dir, in numeric order."""
+	ages = []
+	for path in glob(os.path.join(image_dir, '*')):
+		name = os.path.basename(path)
+		if os.path.isdir(path) and name.isdigit():
+			ages.append(int(name))
+	return sorted(ages)
+
+
+def age_bin(age):
+	return int(np.clip(np.digitize(age, AGE_BIN_EDGES) - 1, 0, len(AGE_BIN_EDGES) - 2))
+
 
 class DataFolder(data.Dataset):
-	def __init__(self, image_dir, image_type, transform, mode='train'):
+	def __init__(self, image_dir, image_type, transform, mode, min_age, max_age, keep_out_of_range=False):
 		# Dictionary to map image types to their respective loading functions
 		self.__image_reader = {
 			'np': lambda url: np.load(url),
 			'nii': lambda url: nib.load(url).get_fdata()
 		}
+		self.__extensions = {
+			'np': ['*.npy'],
+			'nii': ['*.nii', '*.nii.gz'],
+		}
 
-		# Supported image extensions
-		self.__supported_extensions = self.__image_reader.keys()
-		assert image_type in self.__supported_extensions
+		assert image_type in self.__image_reader
 		assert transform is not None
 
 		self.image_dir = image_dir
 		self.image_type = image_type
 		self.transform = transform
 		self.mode = mode
-		self.data_urls = []
-		self.data_labels = []
-		self.data_index = []
-		self.num_classes = 0
+		self.min_age = min_age
+		self.max_age = max_age
+		self.keep_out_of_range = keep_out_of_range
+		self.num_classes = max_age - min_age + 1
+		self.samples = []
 
-		# Process the dataset
 		self.__process()
 
-		print("Total data loaded =", len(self.data_urls))
+		print("Total data loaded =", len(self.samples))
 
 	def __process(self):
-		# Get the list of classes (directories) in the image directory
-		classes = sorted([c.split("/")[-1] for c in glob(os.path.join(self.image_dir, '*'))])
-		self.num_classes = len(classes)
-		print("Classes: ", self.num_classes)
+		files_per_age = {}
+		for age in list_age_folders(self.image_dir):
+			# Out-of-range labels are invalid class targets, so they are only usable for inference
+			if not self.keep_out_of_range and not self.min_age <= age <= self.max_age:
+				print(f"Skipping age folder {age}: outside the model's age range [{self.min_age}, {self.max_age}]")
+				continue
+			files = []
+			for pattern in self.__extensions[self.image_type]:
+				files += glob(os.path.join(self.image_dir, str(age), pattern))
+			files_per_age[age] = sorted(files)
+		print("Ages: ", len(files_per_age))
 
-		# Read the master data CSV file
-		df = pd.read_csv("masterdata.csv") 
-		age = df['age'].tolist()
-
-		# Create histogram of ages
-		hist, bin_edges = np.histogram(age, bins=[
-			8, 12, 16, 20, 24, 28, 
-			32, 36, 40, 44, 48, 
-			52, 56, 60, 64, 68, 
-			72, 76, 80, 84, 88, 92, 96])
-
-		# Calculate the sample multiplier for each bin
-		maxval = np.max(hist)
-		multp = [int(np.floor(maxval / freq)) if freq > 0 else 0 for freq in hist]
-		sample_mul = {}
-
-		# Assign sample multipliers to each class
-		for i, c in enumerate(classes):
-			for j in range(1, len(bin_edges)):
-				if int(c) >= bin_edges[j-1] and int(c) < bin_edges[j]:
-					if self.mode == "train":
-						sample_mul[c] = multp[j-1]
-					else:
-						sample_mul[c] = 1
-
+		# Oversample under-represented age groups in the training set
+		sample_mul = {age: 1 for age in files_per_age}
+		if self.mode == "train":
+			bin_counts = Counter()
+			for age, files in files_per_age.items():
+				bin_counts[age_bin(age)] += len(files)
+			maxval = max(bin_counts.values())
+			for age in files_per_age:
+				sample_mul[age] = maxval // bin_counts[age_bin(age)]
 		print("Sample multiplier:", sample_mul)
 
-		# Collect data URLs and labels
-		for i, c in enumerate(classes):
-			temp = glob(os.path.join(self.image_dir, c, f'*.{self.image_type}'))
-			self.data_urls += temp * sample_mul[c]
-			self.data_labels += [i] * len(temp) * sample_mul[c]
-
-		self.data_urls.sort()
-
-		# Create data index and shuffle if in training mode
-		self.data_index = list(range(len(self)))
-		if self.mode in ['train']:
-			random.seed(3141)
-			random.shuffle(self.data_index)
+		for age, files in files_per_age.items():
+			label = age - self.min_age
+			self.samples += [(url, label) for url in files] * sample_mul[age]
 
 		assert len(self) > 0
 
@@ -89,29 +89,28 @@ class DataFolder(data.Dataset):
 		return self.__image_reader[self.image_type](url)
 
 	def __getitem__(self, index):
-		# Get the image and label at the specified index
-		img = self.__read(self.data_urls[self.data_index[index]])
-		lbl = self.data_labels[self.data_index[index]]
+		url, lbl = self.samples[index]
+		img = self.__read(url)
 
-		# Apply transforms to the image
+		# Apply transforms to the image and rescale intensities to [0, 1]
 		img = np.expand_dims(img, 0)
-		img = self.transform(img)
-		img -= np.min(img)
-		img /= np.max(img)
-		return torch.FloatTensor(img), torch.LongTensor([lbl])
+		img = torch.as_tensor(self.transform(img), dtype=torch.float32)
+		img = img - img.min()
+		img_max = img.max()
+		if img_max > 0:
+			img = img / img_max
+		return img, torch.LongTensor([lbl]), url
 
 	def __len__(self):
-		# Return the total number of data samples
-		return len(self.data_urls)
+		return len(self.samples)
 
 
-def get_loader(image_dir, crop_size=101, image_size=101, 
-			   batch_size=5, dataset='adni', mode='train', num_workers=16):
-	"""Build and return a data loader."""
+def get_loader(image_dir, min_age, max_age, batch_size=5, mode='train', augment=True, num_workers=16,
+			   keep_out_of_range=False):
+	"""Build and return a data loader. Labels are class indices: age - min_age."""
 	transform = []
 
-	# Add data augmentation transforms if in training mode
-	if mode == 'train':
+	if mode == 'train' and augment:
 		transform.append(T.RandGaussianNoise())
 		transform.append(T.RandBiasField())
 		transform.append(T.RandScaleIntensity(0.25))
@@ -121,26 +120,26 @@ def get_loader(image_dir, crop_size=101, image_size=101,
 		transform.append(T.RandRotate())
 		transform.append(T.RandFlip())
 
-	# Convert the image to a tensor
-	transform.append(T.ToTensor(dtype=torch.float))
+	transform.append(T.ToTensor(dtype=torch.float, track_meta=False))
 	transform = T.Compose(transform)
 
-	# Create the dataset
-	dataset = DataFolder(image_dir, 'nii', transform, mode)
+	dataset = DataFolder(image_dir, 'nii', transform, mode, min_age, max_age, keep_out_of_range)
 
-	# Create the data loader
+	# Training batches must be full (ORDER loss needs at least 2 samples); evaluation keeps every
+	# subject in a fixed order.
+	is_train = mode == 'train'
 	data_loader = data.DataLoader(dataset=dataset,
 								  batch_size=batch_size,
-								  shuffle=True,
-								  drop_last=True,
-								  num_workers=num_workers)
+								  shuffle=is_train,
+								  drop_last=is_train,
+								  num_workers=num_workers,
+								  pin_memory=torch.cuda.is_available())
 	return data_loader
 
 
 if __name__ == '__main__':
-	# Create the data loader
-	loader = get_loader('./data/adni/train', mode="train")
-	# Iterate through the data loader and print the shape of the images and labels
+	ages = list_age_folders('./data/HC/train')
+	loader = get_loader('./data/HC/train', min(ages), max(ages), mode="train")
 	for i, x in enumerate(loader):
 		print(i, x[0].shape, x[1], torch.min(x[0]), torch.max(x[0]))
 		break
