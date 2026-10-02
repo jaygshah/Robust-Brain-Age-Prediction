@@ -1,94 +1,63 @@
 import torch
 import torch.nn.functional as F
-from torchmetrics.functional import pairwise_manhattan_distance
 
-def order_loss(features, y):
-	# Normalize features if there is more than one feature vector
-	if features.shape[0] > 1:
-		features = F.normalize(features, dim=1)
-	
-	# Compute pairwise Manhattan distances and extract upper triangular part
-	distance = triu_up(pairwise_manhattan_distance(features, features))
-	weights = triu_up(pairwise_manhattan_distance(y, y))
-	
-	# Check if there are any pairs with the same label
-	has_same_label = 0 in weights
-	if features.shape[0] > 1:
-		# Normalize weights to be in the range [0, 1]
-		weights_max, weights_min = torch.max(weights), torch.min(weights)
-		if weights_min == weights_max == 0:
-			weights_max = 1
-		weights = ((weights - weights_min) / weights_max)
 
-	# Compute weighted distance and loss
-	distance = distance * weights
-	loss = -torch.mean(distance)
-	return loss
+def order_loss(features, y, max_label_diff=None):
+	"""ORDER loss (Eq. 4-5): Manhattan distance between L2-normalized features, weighted by |age_i - age_j|.
 
-def euclidean_loss(features, y):
-	# Normalize features if there is more than one feature vector
-	if features.shape[0] > 1:
-		features = F.normalize(features, dim=1)
-	
-	# Compute pairwise Euclidean distances and extract upper triangular part
-	distance = triu_up(euclidean_distance(features, features))
-	weights = triu_up(euclidean_distance(y, y))
-	
-	# Check if there are any pairs with the same label
-	has_same_label = 0 in weights
-	if features.shape[0] > 1:
-		# Normalize weights to be in the range [0, 1]
-		weights_max, weights_min = torch.max(weights), torch.min(weights)
-		weights = ((weights - weights_min) / weights_max)
-	
-	# Compute weighted distance and loss
-	distance = distance * weights
-	loss = -torch.mean(distance)
-	return loss
+	max_label_diff: divide age differences by this constant (e.g. max_age - min_age) so weights are
+	proportional to the age gap. If None, use the batch-wise scaling (w - min) / max that produced the
+	WACV 2024 results.
+	"""
+	return _distance_regularizer(features, y, p=1.0, max_label_diff=max_label_diff)
 
-def order_loss_p(features, y, p=float(1/2)):
-	# Normalize features if there is more than one feature vector
-	if features.shape[0] > 1:
-		features = F.normalize(features, dim=1)
-	
-	# Compute pairwise distances with parameter p and extract upper triangular part
-	distance = triu_up(distance_p(features, features, p))
-	weights = triu_up(distance_p(y, y, p))
-	
-	# Check if there are any pairs with the same label
-	has_same_label = 0 in weights
-	if features.shape[0] > 1:
-		# Normalize weights to be in the range [0, 1]
-		weights_max, weights_min = torch.max(weights), torch.min(weights)
-		weights = ((weights - weights_min) / weights_max)
-	
-	# Compute weighted distance and loss
-	distance = distance * weights
-	loss = -torch.mean(distance)
-	return loss
 
-def distance_p(x, y, p):
-	# Compute pairwise distances with parameter p
-	x, y = x.type(torch.FloatTensor), y.type(torch.FloatTensor)
-	distance = torch.cdist(x, y, p=p)
-	return distance
+def euclidean_loss(features, y, max_label_diff=None):
+	# ORDER loss with the L2 distance (k = 2 in Tab. 5)
+	return _distance_regularizer(features, y, p=2.0, max_label_diff=max_label_diff)
 
-def euclidean_distance(x, y):
-	# Compute pairwise Euclidean distances
-	x, y = x.type(torch.FloatTensor), y.type(torch.FloatTensor)
-	distance = torch.cdist(x, y, p=2.0)
-	return distance
+
+def order_loss_p(features, y, p=0.5, max_label_diff=None):
+	# ORDER loss with a general Lk distance (fractional k in Tab. 5)
+	return _distance_regularizer(features, y, p=p, max_label_diff=max_label_diff)
+
+
+def _distance_regularizer(features, y, p, max_label_diff):
+	if features.shape[0] < 2:
+		return features.sum() * 0.0
+
+	features = F.normalize(features, dim=1)
+	y = y.float().view(features.shape[0], -1)
+
+	# Pairwise feature distances and absolute label differences, upper triangle only
+	distance = triu_up(torch.cdist(features, features, p=p))
+	weights = triu_up(torch.cdist(y, y, p=1.0))
+	weights = _scale_weights(weights, max_label_diff)
+
+	return -torch.mean(distance * weights)
+
+
+def _scale_weights(weights, max_label_diff):
+	if max_label_diff is not None:
+		return weights / max(float(max_label_diff), 1.0)
+
+	weights_min, weights_max = torch.min(weights), torch.max(weights)
+	if weights_max == 0:
+		return weights
+	return (weights - weights_min) / weights_max
+
 
 def triu_up(dist):
 	# Extract the upper triangular part of the distance matrix, excluding the diagonal
 	a, b = dist.shape
 	assert a == b
-	indexes = torch.triu(torch.ones(a, b), diagonal=1).to(torch.bool)
+	indexes = torch.triu(torch.ones(a, b, dtype=torch.bool, device=dist.device), diagonal=1)
 	return dist[indexes]
 
-if __name__ == "__main__":
-	# Example usage of the loss functions
-	x = torch.tensor([[1,  1], [2, 2], [3, 3]]).type(torch.FloatTensor)
-	y = torch.tensor([[1], [1], [1]]).type(torch.FloatTensor)
 
+if __name__ == "__main__":
+	x = torch.tensor([[1, 1], [2, 2], [3, 3]]).type(torch.FloatTensor)
+	y = torch.tensor([[20], [40], [80]])
+
+	print(order_loss(x, y, max_label_diff=85))
 	print(order_loss(x, y))
