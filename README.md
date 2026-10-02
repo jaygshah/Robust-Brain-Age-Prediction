@@ -39,28 +39,45 @@ Packages used in the current version of this code.
 monai==1.3.0
 torch==2.1.0+cu118
 torchaudio==2.1.0+cu118
-torchmetrics==1.2.0
 torchvision==0.16.0+cu118
 tensorboard==2.14.1
-tensorflow==2.14.0
+nibabel
+pandas
+scikit-learn
 ```
 ## Dataset
-Use `age_binning.py` to create the data folds. You should structure your aligned dataset in the following way:
+Use `age_binning.py` to create the data folds from a CSV with `patientid` (path to the scan) and `age` columns:
+```
+python3 age_binning.py --csv masterdata.csv --out_dir data --seed 3141
+```
+Ages are rounded to the closest integer, and each scan is linked into a folder named after its age:
 ```
 data/HC/
   ├── train
-  	├──xxx.nii
-	├──...
+  	├── 18
+  		├── xxx.nii
+  		├── ...
+  	├── 19
+  	├── ...
   ├── val
-  	├──yyy.nii
-	├──...
+  	├── <age>/yyy.nii
   ├── test
-  	├──zzz.nii
-	├──...
+  	├── <age>/zzz.nii
 ```
+Class labels are `age - min_age`, where `min_age`/`max_age` default to the youngest/oldest age folder in `train` (override with `--min_age`/`--max_age`).
+
 ## Training 
 ```
 python3 train.py --dataset data --batch_size 4 --losses ce order --model_name resnet18 --ld 0.1
+```
+Other losses: `mse` (regression), `mv` (mean-variance), `euc` (ORDER with Euclidean distance) and `order_p` (ORDER with an Lk distance, set with `--p`). Training uses AdamW (lr 1e-3, weight decay 1e-2), keeps the checkpoint with the best validation MAE (`--patience N` enables early stopping), and then reports MAE, ordinality, SB-L and SB-R on the test set in `test_metrics.json`, with per-subject predictions in `test_predictions.csv`.
+
+By default, ORDER scales the pair weights within each batch, as in the results below; `--order_weights age` instead weights each pair by its age difference divided by `max_age - min_age`. The released code used Adam without weight decay; use `--opt adam --weight_decay 0` to match it.
+
+## Evaluation
+Predict ages and BrainAGE for any folder with per-age subfolders, e.g. the test split or an external cohort:
+```
+python3 evaluate.py --run_dir runs/<training folder> --data_dir data/HC/test
 ```
 ## Results 
 Methods		      | MAE   | Ordinality| SB-L	| SB-R
